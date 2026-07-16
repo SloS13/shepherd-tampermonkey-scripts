@@ -1,0 +1,139 @@
+// ==UserScript==
+// @name         Shepherd Bulletproof Radiograph Upload
+// @namespace    http://tampermonkey.net/
+// @version      3.0
+// @description  Multi-image batch upload for orthogonal radiograph studies
+// @author       Clinic IT Manager
+// @match        https://*.shepherd.vet/*
+// @grant        GM_xmlhttpRequest
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    const btn = document.createElement("button");
+    btn.innerHTML = "🚀 Auto-Upload Today's Radiographs";
+    btn.style = "margin-left: 15px; padding: 3px 10px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px; vertical-align: middle; display: inline-block; line-height: 1.2;";
+
+    btn.addEventListener("click", function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const pageText = document.body.innerText;
+        let patientId = "";
+
+        const flexibleRegex = /\b([A-Z0-9]+)\s*[\b•\s\r\n]*\s*(Feline|Canine|Equine|Porcine|Bovine|Caprine|Ovine|Avian|Reptile|Pocket)/i;
+        const match = pageText.match(flexibleRegex);
+
+        if (match && match[1]) {
+            patientId = match[1].trim().toUpperCase();
+        }
+
+        if (!patientId || patientId === "SEX" || patientId === "AGE" || patientId === "A") {
+            const tokens = pageText.split(/\s+/);
+            const speciesKeywords = ["FELINE", "CANINE", "EQUINE", "PORCINE", "BOVINE", "CAPRINE", "OVINE"];
+            for (let i = 0; i < tokens.length; i++) {
+                if (speciesKeywords.includes(tokens[i].toUpperCase()) && i > 0) {
+                    let potentialId = tokens[i-1].replace(/[^A-Z0-9]/gi, "").toUpperCase();
+                    if (potentialId.length >= 3) {
+                        patientId = potentialId;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!patientId) {
+            alert("❌ Could not confidently read the Patient ID from this record layout.");
+            return;
+        }
+
+        btn.innerHTML = `⏳ Matching ID: ${patientId}...`;
+        btn.style.backgroundColor = "#ffc107";
+
+        GM_xmlhttpRequest({
+            method: "GET",
+            url: `http://localhost:5000/get-latest-image?patient_id=${encodeURIComponent(patientId)}`,
+            responseType: "json",
+            onload: function(response) {
+                if (response.status === 200 && response.response.success) {
+                    const filesList = response.response.files;
+
+                    let targetFileInput = null;
+                    const headers = document.querySelectorAll("h5");
+                    for (let h of headers) {
+                        if (h.textContent.trim().includes("Imaging")) {
+                            const section = h.closest("div[class*='MuiPaper']", "div[class*='MuiCard']", "section") || h.parentElement.parentElement.parentElement;
+                            if (section) {
+                                targetFileInput = section.querySelector("input[type='file']");
+                            }
+                            break;
+                        }
+                    }
+
+                    if (!targetFileInput) {
+                        const allInputs = document.querySelectorAll("input[type='file']");
+                        targetFileInput = allInputs.length > 1 ? allInputs[1] : allInputs[0];
+                    }
+
+                    if (targetFileInput) {
+                        btn.innerHTML = `⏳ Injecting ${filesList.length} view(s)...`;
+
+                        const dataTransfer = new DataTransfer();
+                        const fetchPromises = filesList.map(item => {
+                            return fetch(`data:image/jpeg;base64,${item.file_base64}`)
+                                .then(res => res.blob())
+                                .then(blob => {
+                                    const file = new File([blob], item.file_name, { type: "image/jpeg" });
+                                    dataTransfer.items.add(file);
+                                });
+                        });
+
+                        Promise.all(fetchPromises).then(() => {
+                            targetFileInput.files = dataTransfer.files;
+                            targetFileInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+                            btn.innerHTML = `✅ Uploaded ${filesList.length} view(s)!`;
+                            btn.style.backgroundColor = "#28a745";
+                            setTimeout(attachButtonToHeader, 3000);
+                        });
+                    } else {
+                        alert("❌ Could not detect the Imaging upload area on this page.");
+                        resetButton();
+                    }
+                } else {
+                    alert("❌ Match Error: " + response.response.error);
+                    resetButton();
+                }
+            },
+            onerror: function() {
+                alert("❌ Background bridge server is not responding!");
+                resetButton();
+            }
+        });
+    });
+
+    function resetButton() {
+        btn.innerHTML = "🚀 Auto-Upload Today's Radiographs";
+        btn.style.backgroundColor = "#28a745";
+    }
+
+    function attachButtonToHeader() {
+        const headers = document.querySelectorAll("h5");
+        let imagingHeader = null;
+        for (let h of headers) {
+            if (h.textContent.trim().includes("Imaging")) {
+                imagingHeader = h;
+                break;
+            }
+        }
+        if (imagingHeader && !imagingHeader.contains(btn)) {
+            imagingHeader.appendChild(btn);
+            resetButton();
+        }
+    }
+
+    const observer = new MutationObserver(attachButtonToHeader);
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    attachButtonToHeader();
+})();
