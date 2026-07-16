@@ -1,0 +1,1055 @@
+// ==UserScript==
+// @name         Shepherd In-House Lab Manager
+// @namespace    http://tampermonkey.net/
+// @version      4.1
+// @description  Styled in-house lab result manager for Shepherd
+// @author       You
+// @match        https://app.shepherd.vet/*
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    const PREFIX = 'bayside-lab';
+
+    /**
+     * Scoped Tailwind-inspired styling.
+     *
+     * Using scoped CSS instead of loading the Tailwind CDN prevents
+     * Tailwind's preflight styles from changing Shepherd's interface.
+     */
+    function injectStyles() {
+        if (document.getElementById(`${PREFIX}-styles`)) {
+            return;
+        }
+
+        const style = document.createElement('style');
+        style.id = `${PREFIX}-styles`;
+
+        style.textContent = `
+            #${PREFIX}-overlay,
+            #${PREFIX}-overlay * {
+                box-sizing: border-box;
+            }
+
+            #${PREFIX}-overlay {
+                position: fixed;
+                inset: 0;
+                z-index: 999999;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 24px;
+
+                /*
+                 * Traditional translucent gray backdrop.
+                 */
+                background: rgba(17, 24, 39, 0.62);
+                backdrop-filter: blur(2px);
+                -webkit-backdrop-filter: blur(2px);
+
+                font-family:
+                    Inter,
+                    ui-sans-serif,
+                    system-ui,
+                    -apple-system,
+                    BlinkMacSystemFont,
+                    "Segoe UI",
+                    sans-serif;
+            }
+
+            #${PREFIX}-modal {
+                width: 100%;
+                max-width: 560px;
+                max-height: calc(100vh - 48px);
+                overflow-y: auto;
+
+                background: #ffffff;
+                color: #111827;
+                border: 1px solid #e5e7eb;
+                border-radius: 16px;
+                box-shadow:
+                    0 25px 50px -12px rgba(0, 0, 0, 0.35),
+                    0 8px 18px -8px rgba(0, 0, 0, 0.2);
+
+                animation: ${PREFIX}-modal-enter 150ms ease-out;
+            }
+
+            #${PREFIX}-modal.${PREFIX}-modal-wide {
+                max-width: 720px;
+            }
+
+            @keyframes ${PREFIX}-modal-enter {
+                from {
+                    opacity: 0;
+                    transform: translateY(8px) scale(0.98);
+                }
+
+                to {
+                    opacity: 1;
+                    transform: translateY(0) scale(1);
+                }
+            }
+
+            .${PREFIX}-header {
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 16px;
+
+                padding: 22px 24px 18px;
+                border-bottom: 1px solid #e5e7eb;
+            }
+
+            .${PREFIX}-title {
+                margin: 0;
+                color: #111827;
+                font-size: 20px;
+                line-height: 1.35;
+                font-weight: 700;
+                letter-spacing: -0.015em;
+            }
+
+            .${PREFIX}-subtitle {
+                margin: 5px 0 0;
+                color: #6b7280;
+                font-size: 14px;
+                line-height: 1.45;
+            }
+
+            .${PREFIX}-body {
+                padding: 24px;
+            }
+
+            .${PREFIX}-footer {
+                display: flex;
+                align-items: center;
+                justify-content: flex-end;
+                flex-wrap: wrap;
+                gap: 10px;
+
+                padding: 16px 24px;
+                background: #f9fafb;
+                border-top: 1px solid #e5e7eb;
+                border-radius: 0 0 16px 16px;
+            }
+
+            .${PREFIX}-close {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                flex-shrink: 0;
+
+                width: 36px;
+                height: 36px;
+                padding: 0;
+
+                color: #6b7280;
+                background: transparent;
+                border: 0;
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 24px;
+                line-height: 1;
+                transition:
+                    background-color 120ms ease,
+                    color 120ms ease;
+            }
+
+            .${PREFIX}-close:hover {
+                color: #111827;
+                background: #f3f4f6;
+            }
+
+            .${PREFIX}-grid {
+                display: grid;
+                gap: 12px;
+            }
+
+            .${PREFIX}-grid-2 {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 18px;
+            }
+
+            .${PREFIX}-lab-button {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                width: 100%;
+                min-height: 52px;
+                padding: 13px 16px;
+
+                color: #1f2937;
+                background: #ffffff;
+                border: 1px solid #d1d5db;
+                border-radius: 10px;
+
+                font: inherit;
+                font-size: 15px;
+                font-weight: 600;
+                text-align: left;
+                cursor: pointer;
+
+                transition:
+                    background-color 120ms ease,
+                    border-color 120ms ease,
+                    box-shadow 120ms ease,
+                    transform 120ms ease;
+            }
+
+            .${PREFIX}-lab-button:hover {
+                color: #111827;
+                background: #f9fafb;
+                border-color: #9ca3af;
+                box-shadow: 0 4px 10px rgba(0, 0, 0, 0.06);
+                transform: translateY(-1px);
+            }
+
+            .${PREFIX}-lab-button:focus-visible,
+            .${PREFIX}-button:focus-visible,
+            .${PREFIX}-close:focus-visible,
+            .${PREFIX}-select:focus-visible,
+            .${PREFIX}-checkbox:focus-visible {
+                outline: 3px solid rgba(59, 130, 246, 0.3);
+                outline-offset: 2px;
+            }
+
+            .${PREFIX}-lab-icon {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                flex-shrink: 0;
+
+                width: 34px;
+                height: 34px;
+                margin-right: 12px;
+
+                color: #047857;
+                background: #d1fae5;
+                border-radius: 9px;
+                font-size: 17px;
+            }
+
+            .${PREFIX}-lab-content {
+                display: flex;
+                align-items: center;
+                flex: 1;
+            }
+
+            .${PREFIX}-arrow {
+                margin-left: 12px;
+                color: #9ca3af;
+                font-size: 20px;
+                font-weight: 400;
+            }
+
+            .${PREFIX}-section {
+                padding: 18px;
+                background: #f9fafb;
+                border: 1px solid #e5e7eb;
+                border-radius: 12px;
+            }
+
+            .${PREFIX}-section-title {
+                margin: 0 0 14px;
+                color: #111827;
+                font-size: 16px;
+                font-weight: 700;
+            }
+
+            .${PREFIX}-field-grid {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) 110px;
+                align-items: center;
+                gap: 10px 14px;
+            }
+
+            .${PREFIX}-label {
+                color: #374151;
+                font-size: 14px;
+                font-weight: 600;
+                text-transform: capitalize;
+            }
+
+            .${PREFIX}-select {
+                width: 100%;
+                min-height: 40px;
+                padding: 8px 32px 8px 11px;
+
+                color: #111827;
+                background-color: #ffffff;
+                border: 1px solid #d1d5db;
+                border-radius: 8px;
+
+                font: inherit;
+                font-size: 14px;
+                font-weight: 600;
+                cursor: pointer;
+            }
+
+            .${PREFIX}-select:hover {
+                border-color: #9ca3af;
+            }
+
+            .${PREFIX}-check-list {
+                display: grid;
+                gap: 10px;
+            }
+
+            .${PREFIX}-check-row {
+                display: flex;
+                align-items: center;
+                gap: 11px;
+
+                min-height: 44px;
+                padding: 10px 12px;
+
+                background: #ffffff;
+                border: 1px solid #e5e7eb;
+                border-radius: 9px;
+                cursor: pointer;
+                transition:
+                    background-color 120ms ease,
+                    border-color 120ms ease;
+            }
+
+            .${PREFIX}-check-row:hover {
+                background: #f9fafb;
+                border-color: #d1d5db;
+            }
+
+            .${PREFIX}-checkbox {
+                width: 18px;
+                height: 18px;
+                margin: 0;
+                flex-shrink: 0;
+                accent-color: #059669;
+                cursor: pointer;
+            }
+
+            .${PREFIX}-check-label {
+                color: #374151;
+                font-size: 14px;
+                font-weight: 600;
+                text-transform: capitalize;
+                cursor: pointer;
+            }
+
+            .${PREFIX}-button {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 40px;
+                padding: 9px 16px;
+
+                border: 1px solid transparent;
+                border-radius: 8px;
+
+                font: inherit;
+                font-size: 14px;
+                font-weight: 700;
+                line-height: 1.2;
+                cursor: pointer;
+
+                transition:
+                    background-color 120ms ease,
+                    border-color 120ms ease,
+                    box-shadow 120ms ease,
+                    transform 120ms ease;
+            }
+
+            .${PREFIX}-button:hover {
+                transform: translateY(-1px);
+            }
+
+            .${PREFIX}-button-primary {
+                color: #ffffff;
+                background: #059669;
+                border-color: #059669;
+                box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+            }
+
+            .${PREFIX}-button-primary:hover {
+                background: #047857;
+                border-color: #047857;
+            }
+
+            .${PREFIX}-button-secondary {
+                color: #374151;
+                background: #ffffff;
+                border-color: #d1d5db;
+            }
+
+            .${PREFIX}-button-secondary:hover {
+                color: #111827;
+                background: #f3f4f6;
+                border-color: #9ca3af;
+            }
+
+            #master-lab-btn {
+                display: inline-flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                gap: 8px !important;
+
+                min-height: 40px !important;
+                margin: 10px 0 !important;
+                padding: 9px 16px !important;
+
+                color: #ffffff !important;
+                background: #059669 !important;
+                border: 1px solid #059669 !important;
+                border-radius: 8px !important;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12) !important;
+
+                font-family:
+                    Inter,
+                    ui-sans-serif,
+                    system-ui,
+                    -apple-system,
+                    BlinkMacSystemFont,
+                    "Segoe UI",
+                    sans-serif !important;
+                font-size: 14px !important;
+                font-weight: 700 !important;
+                line-height: 1.2 !important;
+                cursor: pointer !important;
+
+                transition:
+                    background-color 120ms ease,
+                    border-color 120ms ease,
+                    box-shadow 120ms ease,
+                    transform 120ms ease !important;
+            }
+
+            #master-lab-btn:hover {
+                background: #047857 !important;
+                border-color: #047857 !important;
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.14) !important;
+                transform: translateY(-1px);
+            }
+
+            #master-lab-btn:focus-visible {
+                outline: 3px solid rgba(16, 185, 129, 0.35) !important;
+                outline-offset: 2px !important;
+            }
+
+            @media (max-width: 640px) {
+                #${PREFIX}-overlay {
+                    align-items: flex-end;
+                    padding: 12px;
+                }
+
+                #${PREFIX}-modal,
+                #${PREFIX}-modal.${PREFIX}-modal-wide {
+                    max-width: none;
+                    max-height: calc(100vh - 24px);
+                    border-radius: 14px;
+                }
+
+                .${PREFIX}-grid-2 {
+                    grid-template-columns: 1fr;
+                }
+
+                .${PREFIX}-header {
+                    padding: 18px;
+                }
+
+                .${PREFIX}-body {
+                    padding: 18px;
+                }
+
+                .${PREFIX}-footer {
+                    padding: 14px 18px;
+                }
+
+                .${PREFIX}-footer .${PREFIX}-button {
+                    flex: 1;
+                }
+            }
+
+            @media (prefers-reduced-motion: reduce) {
+                #${PREFIX}-modal {
+                    animation: none;
+                }
+
+                .${PREFIX}-button,
+                .${PREFIX}-lab-button {
+                    transition: none;
+                }
+            }
+        `;
+
+        document.head.appendChild(style);
+    }
+
+    function closeModal() {
+        document.getElementById(`${PREFIX}-overlay`)?.remove();
+        document.removeEventListener('keydown', handleEscapeKey);
+    }
+
+    function handleEscapeKey(event) {
+        if (event.key === 'Escape') {
+            closeModal();
+        }
+    }
+
+    /**
+     * Creates the shared modal layout.
+     */
+    function createModal({
+        title,
+        subtitle = '',
+        bodyHtml = '',
+        wide = false
+    }) {
+        closeModal();
+
+        const overlay = document.createElement('div');
+        overlay.id = `${PREFIX}-overlay`;
+
+        const modal = document.createElement('div');
+        modal.id = `${PREFIX}-modal`;
+        modal.setAttribute('role', 'dialog');
+        modal.setAttribute('aria-modal', 'true');
+        modal.setAttribute('aria-labelledby', `${PREFIX}-modal-title`);
+
+        if (wide) {
+            modal.classList.add(`${PREFIX}-modal-wide`);
+        }
+
+        modal.innerHTML = `
+            <div class="${PREFIX}-header">
+                <div>
+                    <h2
+                        id="${PREFIX}-modal-title"
+                        class="${PREFIX}-title"
+                    >
+                        ${title}
+                    </h2>
+
+                    ${
+                        subtitle
+                            ? `<p class="${PREFIX}-subtitle">${subtitle}</p>`
+                            : ''
+                    }
+                </div>
+
+                <button
+                    type="button"
+                    class="${PREFIX}-close"
+                    data-lab-action="close"
+                    aria-label="Close dialog"
+                    title="Close"
+                >
+                    &times;
+                </button>
+            </div>
+
+            <div class="${PREFIX}-body">
+                ${bodyHtml}
+            </div>
+
+            <div class="${PREFIX}-footer">
+                <button
+                    type="button"
+                    class="${PREFIX}-button ${PREFIX}-button-secondary"
+                    data-lab-action="close"
+                >
+                    Cancel
+                </button>
+
+                <button
+                    type="button"
+                    class="${PREFIX}-button ${PREFIX}-button-primary"
+                    data-lab-action="insert"
+                >
+                    Insert into Note
+                </button>
+            </div>
+        `;
+
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+
+        overlay.addEventListener('click', event => {
+            if (event.target === overlay) {
+                closeModal();
+            }
+        });
+
+        modal.querySelectorAll('[data-lab-action="close"]').forEach(button => {
+            button.addEventListener('click', closeModal);
+        });
+
+        document.addEventListener('keydown', handleEscapeKey);
+
+        requestAnimationFrame(() => {
+            const firstControl = modal.querySelector(
+                'button:not([data-lab-action="close"]), select, input'
+            );
+
+            firstControl?.focus();
+        });
+
+        return {
+            overlay,
+            modal,
+            insertButton: modal.querySelector('[data-lab-action="insert"]')
+        };
+    }
+
+    /**
+     * Updates the Shepherd note field and dispatches events so frameworks
+     * such as React recognize the change.
+     */
+    function insertNote(content) {
+    const targetBox = document.querySelector(
+        '[data-test-id="lab-note-txtbox"]'
+    );
+
+    if (!targetBox) {
+        alert('The Shepherd lab note field could not be found.');
+        return false;
+    }
+
+    targetBox.focus();
+
+    document.execCommand(
+        'insertText',
+        false,
+        `\n${content}\n`
+    );
+
+    return true;
+}
+
+    function showMasterMenu() {
+        const bodyHtml = `
+            <div class="${PREFIX}-grid">
+                <button
+                    type="button"
+                    class="${PREFIX}-lab-button"
+                    data-lab-type="ear"
+                >
+                    <span class="${PREFIX}-lab-content">
+                        <span class="${PREFIX}-lab-icon">E</span>
+                        <span>Ear Cytology</span>
+                    </span>
+                    <span class="${PREFIX}-arrow">&rsaquo;</span>
+                </button>
+
+                <button
+                    type="button"
+                    class="${PREFIX}-lab-button"
+                    data-lab-type="skin-cytology"
+                >
+                    <span class="${PREFIX}-lab-content">
+                        <span class="${PREFIX}-lab-icon">S</span>
+                        <span>Skin Cytology</span>
+                    </span>
+                    <span class="${PREFIX}-arrow">&rsaquo;</span>
+                </button>
+
+                <button
+                    type="button"
+                    class="${PREFIX}-lab-button"
+                    data-lab-type="urine-sediment"
+                >
+                    <span class="${PREFIX}-lab-content">
+                        <span class="${PREFIX}-lab-icon">U</span>
+                        <span>Urine Sediment</span>
+                    </span>
+                    <span class="${PREFIX}-arrow">&rsaquo;</span>
+                </button>
+
+                <button
+                    type="button"
+                    class="${PREFIX}-lab-button"
+                    data-lab-type="fecal"
+                >
+                    <span class="${PREFIX}-lab-content">
+                        <span class="${PREFIX}-lab-icon">F</span>
+                        <span>Fecal Exam</span>
+                    </span>
+                    <span class="${PREFIX}-arrow">&rsaquo;</span>
+                </button>
+            </div>
+        `;
+
+        const { modal } = createModal({
+            title: 'Select In-House Lab',
+            subtitle: 'Choose the test result you would like to enter.',
+            bodyHtml
+        });
+
+        modal
+            .querySelector('[data-lab-action="insert"]')
+            ?.remove();
+
+        modal.querySelector('[data-lab-type="ear"]')
+            ?.addEventListener('click', showCytologyModal);
+
+        modal.querySelector('[data-lab-type="skin-cytology"]')
+            ?.addEventListener('click', showSkinCytologyModal);
+
+        modal.querySelector('[data-lab-type="urine-sediment"]')
+            ?.addEventListener('click', showUrineSedimentModal);
+
+        modal.querySelector('[data-lab-type="fecal"]')
+            ?.addEventListener('click', showFecalModal);
+    }
+
+    const RESULT_OPTIONS = ['NEG', '1+', '2+', '3+', '4+', 'TNTC'];
+
+    function buildResultOptions() {
+        return RESULT_OPTIONS.map(option => `
+            <option
+                value="${option}"
+                ${option === 'NEG' ? 'selected' : ''}
+            >
+                ${option}
+            </option>
+        `).join('');
+    }
+
+    function buildCytologySection(side, description) {
+        const items = ['Yeast', 'Cocci', 'Rods', 'Mites'];
+
+        const fields = items.map(item => {
+            const fieldName = item.toLowerCase();
+
+            return `
+                <label
+                    class="${PREFIX}-label"
+                    for="${PREFIX}-${side}-${fieldName}"
+                >
+                    ${item}
+                </label>
+
+                <select
+                    id="${PREFIX}-${side}-${fieldName}"
+                    class="${PREFIX}-select"
+                >
+                    ${buildResultOptions()}
+                </select>
+            `;
+        }).join('');
+
+        return `
+            <section class="${PREFIX}-section">
+                <h3 class="${PREFIX}-section-title">
+                    ${side} &mdash; ${description}
+                </h3>
+
+                <div class="${PREFIX}-field-grid">
+                    ${fields}
+                </div>
+            </section>
+        `;
+    }
+
+    function showCytologyModal() {
+        const bodyHtml = `
+            <div class="${PREFIX}-grid-2">
+                ${buildCytologySection('AS', 'Left Ear')}
+                ${buildCytologySection('AD', 'Right Ear')}
+            </div>
+        `;
+
+        const { insertButton } = createModal({
+            title: 'Ear Cytology Entry',
+            subtitle: 'Record findings for the left and right ears.',
+            bodyHtml,
+            wide: true
+        });
+
+        insertButton.addEventListener('click', () => {
+            const lines = ['Ear Cytology Result:'];
+
+            ['AS', 'AD'].forEach(side => {
+                lines.push(`${side}:`);
+
+                ['yeast', 'cocci', 'rods', 'mites'].forEach(item => {
+                    const select = document.getElementById(
+                        `${PREFIX}-${side}-${item}`
+                    );
+
+                    lines.push(`  ${item}: ${select.value}`);
+                });
+            });
+
+            if (insertNote(lines.join('\n'))) {
+                closeModal();
+            }
+        });
+    }
+
+    function showSkinCytologyModal() {
+        const items = ['Yeast', 'Cocci', 'Rods', 'Mites'];
+
+        const bodyHtml = `
+            <section class="${PREFIX}-section">
+                <div class="${PREFIX}-field-grid">
+                    ${items.map(item => {
+                        const fieldName = item.toLowerCase();
+
+                        return `
+                            <label
+                                class="${PREFIX}-label"
+                                for="${PREFIX}-skin-cytology-${fieldName}"
+                            >
+                                ${item}
+                            </label>
+
+                            <select
+                                id="${PREFIX}-skin-cytology-${fieldName}"
+                                class="${PREFIX}-select"
+                            >
+                                ${buildResultOptions()}
+                            </select>
+                        `;
+                    }).join('')}
+                </div>
+            </section>
+        `;
+
+        const { insertButton } = createModal({
+            title: 'Skin Cytology Entry',
+            subtitle: 'Record the skin cytology findings.',
+            bodyHtml
+        });
+
+        insertButton.addEventListener('click', () => {
+            const lines = ['Skin Cytology Result:'];
+
+            ['yeast', 'cocci', 'rods', 'mites'].forEach(item => {
+                const select = document.getElementById(
+                    `${PREFIX}-skin-cytology-${item}`
+                );
+
+                lines.push(`  ${item}: ${select.value}`);
+            });
+
+            if (insertNote(lines.join('\n'))) {
+                closeModal();
+            }
+        });
+    }
+
+    function buildUrineSedimentSection(sectionId, title, includeCrystals) {
+        const items = [
+            { id: 'wbc', label: 'WBC' },
+            { id: 'rbc', label: 'RBC' },
+            { id: 'bacteria-rods', label: 'Bacteria (rods)' },
+            { id: 'bacteria-cocci', label: 'Bacteria (cocci)' }
+        ];
+
+        const crystalsField = includeCrystals ? `
+            <label
+                class="${PREFIX}-label"
+                for="${PREFIX}-${sectionId}-crystals"
+            >
+                Crystals
+            </label>
+
+            <label
+                class="${PREFIX}-check-row"
+                for="${PREFIX}-${sectionId}-crystals"
+                style="min-height:40px; padding:8px 11px;"
+            >
+                <input
+                    type="checkbox"
+                    id="${PREFIX}-${sectionId}-crystals"
+                    class="${PREFIX}-checkbox"
+                >
+                <span class="${PREFIX}-check-label">Yes</span>
+            </label>
+        ` : '';
+
+        return `
+            <section class="${PREFIX}-section">
+                <h3 class="${PREFIX}-section-title">${title}</h3>
+
+                <div class="${PREFIX}-field-grid">
+                    ${crystalsField}
+
+                    ${items.map(item => `
+                        <label
+                            class="${PREFIX}-label"
+                            for="${PREFIX}-${sectionId}-${item.id}"
+                        >
+                            ${item.label}
+                        </label>
+
+                        <select
+                            id="${PREFIX}-${sectionId}-${item.id}"
+                            class="${PREFIX}-select"
+                        >
+                            ${buildResultOptions()}
+                        </select>
+                    `).join('')}
+                </div>
+            </section>
+        `;
+    }
+
+    function showUrineSedimentModal() {
+        const bodyHtml = `
+            <div class="${PREFIX}-grid-2">
+                ${buildUrineSedimentSection('urine-wet', 'Wet Mount', true)}
+                ${buildUrineSedimentSection('urine-stained', 'Stained Slide', false)}
+            </div>
+        `;
+
+        const { insertButton } = createModal({
+            title: 'Urine Sediment Entry',
+            subtitle: 'Record wet-mount and stained-slide findings.',
+            bodyHtml,
+            wide: true
+        });
+
+        insertButton.addEventListener('click', () => {
+            const crystals = document.getElementById(
+                `${PREFIX}-urine-wet-crystals`
+            ).checked ? 'yes' : 'no';
+
+            const fields = [
+                { id: 'wbc', label: 'WBC' },
+                { id: 'rbc', label: 'RBC' },
+                { id: 'bacteria-rods', label: 'Bacteria (rods)' },
+                { id: 'bacteria-cocci', label: 'Bacteria (cocci)' }
+            ];
+
+            const lines = [
+                'Urine Sediment Result:',
+                'Wet Mount:',
+                `  Crystals: ${crystals}`
+            ];
+
+            fields.forEach(field => {
+                const select = document.getElementById(
+                    `${PREFIX}-urine-wet-${field.id}`
+                );
+
+                lines.push(`  ${field.label}: ${select.value}`);
+            });
+
+            lines.push('Stained Slide:');
+
+            fields.forEach(field => {
+                const select = document.getElementById(
+                    `${PREFIX}-urine-stained-${field.id}`
+                );
+
+                lines.push(`  ${field.label}: ${select.value}`);
+            });
+
+            if (insertNote(lines.join('\n'))) {
+                closeModal();
+            }
+        });
+    }
+
+    function buildCheckboxList(group, items) {
+        return `
+            <div class="${PREFIX}-check-list">
+                ${items.map((item, index) => {
+                    const id = `${PREFIX}-${group}-${index}`;
+
+                    return `
+                        <label
+                            class="${PREFIX}-check-row"
+                            for="${id}"
+                        >
+                            <input
+                                type="checkbox"
+                                id="${id}"
+                                class="${PREFIX}-checkbox"
+                                data-result-value="${item}"
+                            >
+
+                            <span class="${PREFIX}-check-label">
+                                ${item}
+                            </span>
+                        </label>
+                    `;
+                }).join('')}
+            </div>
+        `;
+    }
+
+    function getCheckedValues(modal) {
+        return Array.from(
+            modal.querySelectorAll(
+                `.${PREFIX}-checkbox:checked`
+            )
+        ).map(checkbox => checkbox.dataset.resultValue);
+    }
+
+    function showFecalModal() {
+        const parasites = [
+            'hookworms',
+            'roundworms',
+            'whipworms',
+            'Ostertagia',
+            'ascarids',
+            'strongyles'
+        ];
+
+        const bodyHtml = buildCheckboxList('fecal', parasites);
+
+        const { modal, insertButton } = createModal({
+            title: 'Fecal Exam Entry',
+            subtitle: 'Check each parasite with a positive result.',
+            bodyHtml
+        });
+
+        insertButton.addEventListener('click', () => {
+            const positives = getCheckedValues(modal);
+
+            const result = positives.length
+                ? `Fecal Exam Result:${positives
+                    .map(parasite => `\n    * positive - ${parasite}`)
+                    .join('')}`
+                : 'Fecal Exam Result: negative';
+
+            if (insertNote(result)) {
+                closeModal();
+            }
+        });
+    }
+
+    function injectButton() {
+        const targetBox = document.querySelector(
+            '[data-test-id="lab-note-txtbox"]'
+        );
+
+        if (!targetBox || document.getElementById('master-lab-btn')) {
+            return;
+        }
+
+        const button = document.createElement('button');
+        button.id = 'master-lab-btn';
+        button.type = 'button';
+        button.innerHTML = `
+            <span aria-hidden="true">+</span>
+            <span>Add In-House Labs</span>
+        `;
+
+        button.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            showMasterMenu();
+        });
+
+        targetBox.parentNode.insertBefore(button, targetBox);
+    }
+
+    injectStyles();
+    injectButton();
+
+    setInterval(injectButton, 2000);
+})();
